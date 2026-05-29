@@ -1,0 +1,7 @@
+certifi==2026.5.20
+charset-normalizer==3.4.7
+idna==3.17
+regex==2026.5.9
+requests==2.34.2
+tqdm==4.67.3
+urllib3==2.7.0
