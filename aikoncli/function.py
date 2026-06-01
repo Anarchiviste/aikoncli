@@ -91,7 +91,7 @@ def iiif_annotations_to_yolo(img_dict: dict, url_annotations: str, output_dir: P
             width = w / img_width
             height = h / img_height
 
-            lines.setdefault(img_id, []).append(f'0 {x_center} {y_center} {width} {height}')
+            lines.setdefault(img_id, []).append(f'0 {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f}')
 
         for img_id, img_lines in lines.items():
             with open(f'{labels_dir}/{img_id}.txt', 'w') as f:
