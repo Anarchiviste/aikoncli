@@ -20,7 +20,6 @@ def iiif_url_to_annotation_url(url_manifest: str) -> str:
         instance = match.group(2)
         witness_id = match.group(4)
         url_annotations = f"{radical_url}/{instance}/witness/{witness_id}/regions/canvas"
-        print(url_annotations)
     else:
         raise ValueError('Invalide link')
 
@@ -37,44 +36,36 @@ def downloading_image_from_manifest(url_manifest: str, output_dir: Path) -> None
     """
     request = requests.get(url_manifest)
     manifest = request.json()
-    metadata = manifest['metadata']
-    
-    for i in metadata:
-        if i['label'] == '@id':
-            print(i)
-            name = i['value']
-            name = name.replace(' ', '')
-            print(name)
-            images_dir = Path(f"{output_dir}/{name}/images")
-            images_dir.mkdir(parents=True, exist_ok=True)
+    name = next(
+      (i['value'].replace(' ', '') for i in manifest['metadata'] if i['label'] == '@id'),
+         None
+      )
+    if name is None:
+         raise ValueError("No '@id' label found in manifest metadata")
+         
+    images_dir = Path(output_dir) / name / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
             
-    liste_url = []
-    img_dict = {}
-    i_id = 0
-    
-    for canvas in manifest.get('sequences')[0].get('canvases'):
-      images = canvas.get('images')
-      
-      for image in images:
-        resource = image.get('resource')
-        
-        if resource.get('@id'):
-          url = resource.get('@id')
-          liste_url.append(url)
-          i_id += 1
-          img_dict[i_id] = {
-            "url": url,
-            "height": resource.get('height'),
-            "width": resource.get('width'),
-                            }
+    canvases = manifest['sequences'][0]['canvases']
+
+    img_dict = {
+        i: {
+            "url": r.get('@id'),
+            "height": r.get('height'),
+            "width": r.get('width'),
+        }
+        for i, canvas in enumerate(canvases, start=1)
+        for image in canvas.get('images', [])
+        if (r := image.get('resource')) and r.get('@id')
+    }
+
+    liste_url = [v["url"] for v in img_dict.values()]
           
     id_img = 0
-    for i in tqdm(liste_url, desc="Downloading"):
-        id_img += 1
-        data = requests.get(i).content
-        with open(f'{images_dir}/{id_img}.jpg', 'wb') as image_file:
-            image_file.write(data)
-            
+    for img_id, meta in tqdm(img_dict.items(), desc="Downloading Images"):
+        data = requests.get(meta['url']).content
+        (images_dir / f"{img_id}.jpg").write_bytes(data)
+
     return img_dict, name
 
 def iii_annotations_to_yolo(img_dict: dict, url_annotations: str, output_dir: Path, name: str) -> None:
@@ -90,13 +81,11 @@ def iii_annotations_to_yolo(img_dict: dict, url_annotations: str, output_dir: Pa
     labels_dir = Path(f"{output_dir}/{name}/labels")
     labels_dir.mkdir(parents=True, exist_ok=True)
     resultat_annotations = requests.get(url_annotations)
-    print("Status :", resultat_annotations.status_code)
-    print("Contenu :", repr(resultat_annotations.text[:300]))
     annotations_manifest = resultat_annotations.json()
     
-    i_index = []
+    i_index = set()
     
-    for i in annotations_manifest:
+    for i in tqdm(annotations_manifest, desc="Fetching Annotations"):
         annotations = annotations_manifest.get(i)
         page_dictionnaire = img_dict.get(int(i))
         img_height = page_dictionnaire.get('height')
@@ -111,16 +100,14 @@ def iii_annotations_to_yolo(img_dict: dict, url_annotations: str, output_dir: Pa
             height = h / img_height
             line = f'0 {x_center} {y_center} {width} {height}'
             if img_id in i_index:
-                print('already in i_index')
                 with open(f'{labels_dir}/{img_id}.txt', 'a') as f:
                     f.write(f'\n{line}')
             else :
                 with open(f'{labels_dir}/{img_id}.txt', 'w') as f:
-                    print(f'new entry')
                     f.write(f'{line}')
-                    i_index.append(img_id)
+                    i_index.add(img_id)
 
-def aikon_to_yolo(url_manifest: str, output_dir: Path):
+def aikon_to_yolo(url_manifest: str, output_dir: str):
     """
     Orchestrates the full pipeline: converts a IIIF manifest URL to an annotation URL,
     downloads all images, and converts annotations to YOLO format label files.
