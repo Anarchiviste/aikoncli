@@ -20,7 +20,6 @@ def iiif_url_to_annotation_url(url_manifest: str) -> str:
         instance = match.group(2)
         witness_id = match.group(4)
         url_annotations = f"{radical_url}/{instance}/witness/{witness_id}/regions/canvas"
-        print(url_annotations)
     else:
         raise ValueError('Invalide link')
 
@@ -38,46 +37,27 @@ def downloading_image_from_manifest(url_manifest: str, output_dir: Path) -> None
     request = requests.get(url_manifest)
     manifest = request.json()
     metadata = manifest['metadata']
-    
-    for i in metadata:
-        if i['label'] == '@id':
-            print(i)
-            name = i['value']
-            name = name.replace(' ', '')
-            print(name)
-            images_dir = Path(f"{output_dir}/{name}/images")
-            images_dir.mkdir(parents=True, exist_ok=True)
-            
-    liste_url = []
-    img_dict = {}
+
+    meta = {item['label']: item['value'] for item in metadata} # compréhension de dict
+    name = meta['@id'].replace(' ', '')
+    images_dir = Path(f"{output_dir}/{name}/images")
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    canvases = manifest['sequences'][0]['canvases']
     i_id = 0
-    
-    for canvas in manifest.get('sequences')[0].get('canvases'):
-      images = canvas.get('images')
-      
-      for image in images:
-        resource = image.get('resource')
-        
-        if resource.get('@id'):
-          url = resource.get('@id')
-          liste_url.append(url)
-          i_id += 1
-          img_dict[i_id] = {
-            "url": url,
-            "height": resource.get('height'),
-            "width": resource.get('width'),
-                            }
-          
-    id_img = 0
-    for i in tqdm(liste_url, desc="Downloading"):
-        id_img += 1
-        data = requests.get(i).content
-        with open(f'{images_dir}/{id_img}.jpg', 'wb') as image_file:
-            image_file.write(data)
-            
+    img_dict = {}
+    for canvas in tqdm(canvases, desc="Downloading"): # on crée le dict et on télécharge dans la même boucle
+        for image in canvas['images']:
+            resource = image['resource']
+            i_id += 1
+            img_dict[i_id] = {"url": resource['@id'], "height": resource['height'], "width": resource['width']}
+            data = requests.get(resource['@id']).content
+            with open(f'{images_dir}/{i_id}.jpg', 'wb') as f:
+                f.write(data)
+
     return img_dict, name
 
-def iii_annotations_to_yolo(img_dict: dict, url_annotations: str, output_dir: Path, name: str) -> None:
+def iiif_annotations_to_yolo(img_dict: dict, url_annotations: str, output_dir: Path, name: str) -> None:
     """
     Fetches annotations from an AIKON API endpoint and converts them to YOLO format label files.
     Each annotation's bounding box is normalized relative to its image dimensions.
@@ -93,7 +73,7 @@ def iii_annotations_to_yolo(img_dict: dict, url_annotations: str, output_dir: Pa
     print("Status :", resultat_annotations.status_code)
     print("Contenu :", repr(resultat_annotations.text[:300]))
     annotations_manifest = resultat_annotations.json()
-    
+
     i_index = []
     
     for i in annotations_manifest:
@@ -101,7 +81,8 @@ def iii_annotations_to_yolo(img_dict: dict, url_annotations: str, output_dir: Pa
         page_dictionnaire = img_dict.get(int(i))
         img_height = page_dictionnaire.get('height')
         img_width = page_dictionnaire.get('width')
-        
+        lines = {}
+                
         for annotation in annotations:
             img_id = (annotations.get(annotation).get('canvas'))
             x_tl, y_tl, w, h = annotations.get(annotation).get('xywh')
@@ -109,18 +90,14 @@ def iii_annotations_to_yolo(img_dict: dict, url_annotations: str, output_dir: Pa
             y_center = (y_tl + h / 2) / img_height
             width = w / img_width
             height = h / img_height
-            line = f'0 {x_center} {y_center} {width} {height}'
-            if img_id in i_index:
-                print('already in i_index')
-                with open(f'{labels_dir}/{img_id}.txt', 'a') as f:
-                    f.write(f'\n{line}')
-            else :
-                with open(f'{labels_dir}/{img_id}.txt', 'w') as f:
-                    print(f'new entry')
-                    f.write(f'{line}')
-                    i_index.append(img_id)
 
-def aikon_to_yolo(url_manifest: str, output_dir: Path):
+            lines.setdefault(img_id, []).append(f'0 {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f}')
+
+        for img_id, img_lines in lines.items():
+            with open(f'{labels_dir}/{img_id}.txt', 'w') as f:
+                f.write("\n".join(img_lines))
+            
+def aikon_to_yolo(url_manifest: str, output_dir: str):
     """
     Orchestrates the full pipeline: converts a IIIF manifest URL to an annotation URL,
     downloads all images, and converts annotations to YOLO format label files.
@@ -130,4 +107,4 @@ def aikon_to_yolo(url_manifest: str, output_dir: Path):
     """
     url_annotations = iiif_url_to_annotation_url(url_manifest)
     img_dict, name = downloading_image_from_manifest(url_manifest, output_dir)
-    iii_annotations_to_yolo(img_dict, url_annotations, output_dir, name)
+    iiif_annotations_to_yolo(img_dict, url_annotations, output_dir, name)
